@@ -45,10 +45,6 @@
         <property name="message" value="Line has trailing spaces."/>
     </module>
 
-    <module name="LineLength">
-        <property name="max" value="120"/>
-    </module>
-
     <module name="TreeWalker">
         <!-- Checks for Javadoc comments.                     -->
         <!-- See http://checkstyle.sf.net/config_javadoc.html -->
@@ -77,6 +73,9 @@
 
         <!-- Checks for Size Violations.                    -->
         <!-- See http://checkstyle.sf.net/config_sizes.html -->
+        <module name="LineLength">
+            <property name="max" value="120"/>
+        </module>
         <module name="MethodLength"/>
 
         <!-- Checks for whitespace                               -->
@@ -134,8 +133,9 @@
         <!-- See http://checkstyle.sf.net/config_misc.html -->
         <module name="ArrayTypeStyle"/>
         <module name="UpperEll"/>
-        <module name="SuppressionCommentFilter"/>
+        <module name="FileContentsHolder"/>
     </module>
 
+    <module name="SuppressionCommentFilter"/>
 
 </module>

@@ -132,7 +132,7 @@ public class AzureVMCloud extends Cloud {
     private List<AzureTagPair> cloudTags;
 
     //The map should not be accessed without acquiring a lock of the map
-    private transient Map<AzureVMAgent, AtomicInteger> agentLocks = new HashMap<>();
+    private final transient Map<AzureVMAgent, AtomicInteger> agentLocks = new HashMap<>();
 
     private Supplier<Azure> createAzureClientSupplier() {
         return Suppliers.memoize(() -> AzureClientUtil.getClient(credentialsId))::get;
@@ -200,10 +200,6 @@ public class AzureVMCloud extends Cloud {
             if (instTemplates != null && vmTemplates == null) {
                 vmTemplates = instTemplates;
                 instTemplates = null;
-            }
-
-            if (agentLocks == null) {
-                agentLocks = new HashMap<>();
             }
 
             // Walk the list of templates and assign the parent cloud (which is transient).
@@ -1115,7 +1111,7 @@ public class AzureVMCloud extends Cloud {
                 @QueryParameter String resourceGroupReferenceType,
                 @QueryParameter String newResourceGroupName,
                 @QueryParameter String existingResourceGroupName) {
-            Jenkins.get().checkPermission(Jenkins.ADMINISTER);
+            Jenkins.getInstance().checkPermission(Jenkins.ADMINISTER);
 
             String resourceGroupName = getResourceGroupName(
                     resourceGroupReferenceType, newResourceGroupName, existingResourceGroupName);
@@ -1166,8 +1162,9 @@ public class AzureVMCloud extends Cloud {
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.WARNING, "Cannot list resource group name: ", e);
+            } finally {
+                return model;
             }
-            return model;
         }
     }
 }

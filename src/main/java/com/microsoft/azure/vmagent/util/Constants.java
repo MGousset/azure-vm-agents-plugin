@@ -120,10 +120,8 @@ public final class Constants {
     /**
      * Built In Image.
      */
-    public static final String WINDOWS_SERVER_2019 = "Windows Server 2019";
     public static final String WINDOWS_SERVER_2016 = "Windows Server 2016";
     public static final String UBUNTU_1604_LTS = "Ubuntu 16.04 LTS";
-    public static final String UBUNTU_2004_LTS = "Ubuntu 20.04 LTS";
 
     /**
      * ResourceGroup reference type.
@@ -192,7 +190,7 @@ public final class Constants {
      */
     public static final String JNLP_POST_PROV_LAUNCH_FAIL
             = "Provisioning Failure: JNLP agent failed to connect. Make sure that "
-            + "agent node is able to reach controller and necessary firewall rules are configured";
+            + "agent node is able to reach master and necessary firewall rules are configured";
 
     public static final String AGENT_POST_PROV_JAVA_NOT_FOUND
             = "Post Provisioning Failure: Java runtime not found. At a minimum init script "

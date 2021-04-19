@@ -31,6 +31,7 @@ import com.microsoft.azure.management.network.PublicIPAddress;
 import com.microsoft.azure.management.resources.DeploymentMode;
 import com.microsoft.azure.management.resources.GenericResource;
 import com.microsoft.azure.management.resources.fluentcore.arm.ExpandableStringEnum;
+import com.microsoft.azure.management.resources.fluentcore.arm.Region;
 import com.microsoft.azure.management.storage.*;
 import com.microsoft.azure.storage.AccessCondition;
 import com.microsoft.azure.storage.CloudStorageAccount;
@@ -45,7 +46,7 @@ import com.microsoft.azure.vmagent.retry.NoRetryStrategy;
 import com.microsoft.azure.vmagent.util.*;
 import hudson.model.Descriptor.FormException;
 import jenkins.model.Jenkins;
-import jenkins.slaves.JnlpAgentReceiver;
+import jenkins.slaves.JnlpSlaveAgentProtocol;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.plugins.cloudstats.ProvisioningActivity;
@@ -95,6 +96,28 @@ public final class AzureVMManagementServiceDelegate {
     private static final String EMBEDDED_TEMPLATE_IMAGE_ID_WITH_SCRIPT_MANAGED_FILENAME =
             "/referenceImageIDTemplateWithScriptAndManagedDisk.json";
 
+    // Add the Spot instance template
+    private static final String EMBEDDED_TEMPLATE_IMAGE_SPOT_FILENAME =
+        "/customImageTemplateWithSpot.json";
+    private static final String EMBEDDED_TEMPLATE_IMAGE_WITH_SCRIPT_SPOT_FILENAME =
+        "/customImageTemplateWithScriptAndSpot.json";
+    private static final String EMBEDDED_TEMPLATE_IMAGE_WITH_MANAGED_SPOT_FILENAME =
+        "/customImageTemplateWithManagedDiskAndSpot.json";
+    private static final String EMBEDDED_TEMPLATE_IMAGE_WITH_SCRIPT_MANAGED_SPOT_FILENAME =
+        "/customImageTemplateWithScriptAndManagedDiskAndSpot.json";
+    
+    private static final String EMBEDDED_TEMPLATE_SPOT_FILENAME = 
+        "/referenceImageTemplateWithSpot.json";
+    private static final String EMBEDDED_TEMPLATE_WITH_SCRIPT_SPOT_FILENAME = 
+        "/referenceImageTemplateWithScriptAndSpot.json";
+    private static final String EMBEDDED_TEMPLATE_WITH_MANAGED_SPOT_FILENAME = 
+        "/referenceImageTemplateWithManagedDiskAndSpot.json";
+    private static final String EMBEDDED_TEMPLATE_WITH_SCRIPT_MANAGED_SPOT_FILENAME =
+        "/referenceImageTemplateWithScriptAndManagedDiskAndSpot.json";
+    private static final String EMBEDDED_TEMPLATE_IMAGE_ID_WITH_MANAGED_SPOT_FILENAME =
+        "/referenceImageIDTemplateWithManagedDiskAndSpot.json";
+    private static final String EMBEDDED_TEMPLATE_IMAGE_ID_WITH_SCRIPT_MANAGED_SPOT_FILENAME =
+        "/referenceImageIDTemplateWithScriptAndManagedDiskAndSpot.json";
     private static final String VIRTUAL_NETWORK_TEMPLATE_FRAGMENT_FILENAME = "/virtualNetworkFragment.json";
 
     private static final String PUBLIC_IP_FRAGMENT_FILENAME = "/publicIPFragment.json";
@@ -148,8 +171,6 @@ public final class AzureVMManagementServiceDelegate {
 
     private final String azureCredentialsId;
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     public static AzureVMManagementServiceDelegate getInstance(AzureVMCloud cloud) {
         return cloud.getServiceDelegate();
     }
@@ -167,6 +188,8 @@ public final class AzureVMManagementServiceDelegate {
      * @param template       Template to deploy
      * @param numberOfAgents Number of agents to create
      * @return The base name for the VMs that were created
+     * @throws AzureCloudException
+     * @throws java.io.IOException
      */
     public AzureVMDeploymentInfo createDeployment(AzureVMAgentTemplate template, int numberOfAgents)
             throws AzureCloudException, IOException {
@@ -201,6 +224,7 @@ public final class AzureVMManagementServiceDelegate {
             final String diskType = template.getDiskType();
             final boolean ephemeralOSDisk = template.isEphemeralOSDisk();
             final int osDiskSize = template.getOsDiskSize();
+            final boolean spotInstance = template.isSpotInstance();
             final AzureVMAgentTemplate.AvailabilityTypeClass availabilityType = template.getAvailabilityType();
             final String availabilitySet = availabilityType != null ? availabilityType.getAvailabilitySet() : null;
 
@@ -242,70 +266,92 @@ public final class AzureVMManagementServiceDelegate {
                     = preInstallSshInWindows
                     || properties.get("osType").equals(Constants.OS_TYPE_WINDOWS)
                     && !StringUtils.isBlank((String) properties.get("initScript"))
-                    && properties.get("agentLaunchMethod").equals(Constants.LAUNCH_METHOD_JNLP);
+                    && ((String) properties.get("agentLaunchMethod")).equals(Constants.LAUNCH_METHOD_JNLP);
 
             // check if a custom image id has been provided otherwise work with publisher and offer
             boolean useManagedDisk = diskType.equals(Constants.DISK_MANAGED);
             String msg;
             String templateLocation;
             boolean useCustomImage = !isBasic && referenceType == ImageReferenceType.CUSTOM;
+            // the spot insatnce test must be on customimage == false
+
             if (useCustomScriptExtension) {
                 if (useManagedDisk) {
                     msg = "AzureVMManagementServiceDelegate: createDeployment: "
                             + "Use embedded deployment template (with script and managed) {0}";
                     if (useCustomImage) {
-                        templateLocation = EMBEDDED_TEMPLATE_IMAGE_WITH_SCRIPT_MANAGED_FILENAME;
+                        templateLocation = spotInstance
+                        ? EMBEDDED_TEMPLATE_IMAGE_WITH_SCRIPT_MANAGED_SPOT_FILENAME
+                        : EMBEDDED_TEMPLATE_IMAGE_WITH_SCRIPT_MANAGED_FILENAME;
                     } else {
                         templateLocation = (referenceType == ImageReferenceType.CUSTOM_IMAGE
                                 || referenceType == ImageReferenceType.GALLERY)
-                                ? EMBEDDED_TEMPLATE_IMAGE_ID_WITH_SCRIPT_MANAGED_FILENAME
-                                : EMBEDDED_TEMPLATE_WITH_SCRIPT_MANAGED_FILENAME;
+                                ? spotInstance
+                                    ? EMBEDDED_TEMPLATE_IMAGE_ID_WITH_SCRIPT_MANAGED_SPOT_FILENAME
+                                    : EMBEDDED_TEMPLATE_IMAGE_ID_WITH_SCRIPT_MANAGED_FILENAME
+                                : spotInstance
+                                    ? EMBEDDED_TEMPLATE_WITH_SCRIPT_MANAGED_SPOT_FILENAME
+                                    : EMBEDDED_TEMPLATE_WITH_SCRIPT_MANAGED_FILENAME;
                     }
                 } else {
                     msg = "AzureVMManagementServiceDelegate: createDeployment: "
                             + "Use embedded deployment template (with script) {0}";
                     templateLocation = useCustomImage
-                            ? EMBEDDED_TEMPLATE_IMAGE_WITH_SCRIPT_FILENAME
-                            : EMBEDDED_TEMPLATE_WITH_SCRIPT_FILENAME;
+                            ? spotInstance
+                                ? EMBEDDED_TEMPLATE_IMAGE_WITH_SCRIPT_SPOT_FILENAME
+                                : EMBEDDED_TEMPLATE_IMAGE_WITH_SCRIPT_FILENAME
+                            : spotInstance
+                                ? EMBEDDED_TEMPLATE_WITH_SCRIPT_SPOT_FILENAME
+                                : EMBEDDED_TEMPLATE_WITH_SCRIPT_FILENAME;
                 }
             } else {
                 if (useManagedDisk) {
                     msg = "AzureVMManagementServiceDelegate: createDeployment: "
                             + "Use embedded deployment template (with managed) {0}";
                     if (useCustomImage) {
-                        templateLocation = EMBEDDED_TEMPLATE_IMAGE_WITH_MANAGED_FILENAME;
+                        templateLocation = spotInstance
+                        ? EMBEDDED_TEMPLATE_IMAGE_WITH_MANAGED_SPOT_FILENAME
+                        : EMBEDDED_TEMPLATE_IMAGE_WITH_MANAGED_FILENAME;
                     } else {
                         templateLocation = (referenceType == ImageReferenceType.CUSTOM_IMAGE
                                 || referenceType == ImageReferenceType.GALLERY)
-                                ? EMBEDDED_TEMPLATE_IMAGE_ID_WITH_MANAGED_FILENAME
-                                : EMBEDDED_TEMPLATE_WITH_MANAGED_FILENAME;
+                                ? spotInstance
+                                    ? EMBEDDED_TEMPLATE_IMAGE_ID_WITH_MANAGED_SPOT_FILENAME
+                                    : EMBEDDED_TEMPLATE_IMAGE_ID_WITH_MANAGED_FILENAME
+                                : spotInstance
+                                    ? EMBEDDED_TEMPLATE_WITH_MANAGED_SPOT_FILENAME
+                                    : EMBEDDED_TEMPLATE_WITH_MANAGED_FILENAME;
                     }
                 } else {
                     msg = "AzureVMManagementServiceDelegate: createDeployment: "
                             + "Use embedded deployment template {0}";
                     templateLocation = useCustomImage
-                            ? EMBEDDED_TEMPLATE_IMAGE_FILENAME
-                            : EMBEDDED_TEMPLATE_FILENAME;
+                            ? spotInstance
+                                ? EMBEDDED_TEMPLATE_IMAGE_SPOT_FILENAME
+                                : EMBEDDED_TEMPLATE_IMAGE_FILENAME
+                            : spotInstance
+                                ? EMBEDDED_TEMPLATE_SPOT_FILENAME
+                                : EMBEDDED_TEMPLATE_FILENAME;
                 }
             }
             LOGGER.log(Level.INFO, msg, templateLocation);
             embeddedTemplate = AzureVMManagementServiceDelegate.class.getResourceAsStream(
                     templateLocation);
 
-            final JsonNode tmp = MAPPER.readTree(embeddedTemplate);
+            final ObjectMapper mapper = new ObjectMapper();
+            final JsonNode tmp = mapper.readTree(embeddedTemplate);
 
             // Add count variable for loop....
-            final ObjectNode count = MAPPER.createObjectNode();
+            final ObjectNode count = mapper.createObjectNode();
             count.put("type", "int");
             count.put("defaultValue", numberOfAgents);
-            ((ObjectNode) tmp.get("parameters")).replace("count", count);
+            ObjectNode.class.cast(tmp.get("parameters")).replace("count", count);
 
             putVariable(tmp, "vmName", vmBaseName);
             putVariable(tmp, "location", locationName);
             putVariable(tmp, "jenkinsTag", Constants.AZURE_JENKINS_TAG_VALUE);
             putVariable(tmp, "resourceTag", deploymentRegistrar.getDeploymentTag().get());
             putVariable(tmp, "cloudTag", cloudName);
-            putVariable(tmp, "osDiskStorageAccountType", template.getOsDiskStorageAccountType());
 
             // add purchase plan for image if needed in reference configuration
             // Image Configuration has four choices, isBasic->Built-in Image, useCustomImage->Custom User Image
@@ -330,11 +376,11 @@ public final class AzureVMManagementServiceDelegate {
                                 for (JsonNode resource : resources) {
                                     String type = resource.get("type").asText();
                                     if (type.contains("virtualMachine")) {
-                                        ObjectNode planNode = MAPPER.createObjectNode();
+                                        ObjectNode planNode = mapper.createObjectNode();
                                         planNode.put("name", plan.name());
                                         planNode.put("publisher", plan.publisher());
                                         planNode.put("product", plan.product());
-                                        ((ObjectNode) resource).replace("plan", planNode);
+                                        ObjectNode.class.cast(resource).replace("plan", planNode);
                                     }
                                 }
                             }
@@ -363,11 +409,11 @@ public final class AzureVMManagementServiceDelegate {
                                 for (JsonNode resource : resources) {
                                     String type = resource.get("type").asText();
                                     if (type.contains("virtualMachine")) {
-                                        ObjectNode planNode = MAPPER.createObjectNode();
+                                        ObjectNode planNode = mapper.createObjectNode();
                                         planNode.put("name", planInfo);
                                         planNode.put("publisher", planPublisher);
                                         planNode.put("product", planProduct);
-                                        ((ObjectNode) resource).replace("plan", planNode);
+                                        ObjectNode.class.cast(resource).replace("plan", planNode);
                                     }
                                 }
                             }
@@ -386,28 +432,18 @@ public final class AzureVMManagementServiceDelegate {
                 for (JsonNode resource : resources) {
                     String type = resource.get("type").asText();
                     if (type.contains("virtualMachine")) {
-                        // Determine if User assigned, System assigned or both
-                        // types of identity should be requested.
-                        // https://docs.microsoft.com/en-us/rest/api/compute/virtualmachines/createorupdate#resourceidentitytype
-                        if (msiEnabled && uamiEnabled) {
-                            String uamiID = template.getUamiID();
-                            ObjectNode identityNode = MAPPER.createObjectNode();
-                            identityNode.put("type", "SystemAssigned, UserAssigned");
-                            ObjectNode resourceId = MAPPER.createObjectNode();
-                            resourceId.replace(uamiID, MAPPER.createObjectNode());
-                            identityNode.replace("userAssignedIdentities", resourceId);
-
-                            ((ObjectNode) resource).replace("identity", identityNode);
-                        } else if (msiEnabled) {
-                            ObjectNode identityNode = MAPPER.createObjectNode();
+                        // If MSI is enabled, need to add identity node in virtualMachine resource
+                        if (msiEnabled) {
+                            ObjectNode identityNode = mapper.createObjectNode();
                             identityNode.put("type", "systemAssigned");
                             ((ObjectNode) resource).replace("identity", identityNode);
-                        } else if (uamiEnabled) {
+                        }
+                        if (uamiEnabled) {
                             String uamiID = template.getUamiID();
-                            ObjectNode identityNode = MAPPER.createObjectNode();
+                            ObjectNode identityNode = mapper.createObjectNode();
                             identityNode.put("type", "UserAssigned");
-                            ObjectNode resourceId = MAPPER.createObjectNode();
-                            resourceId.replace(uamiID, MAPPER.createObjectNode());
+                            ObjectNode resourceId = mapper.createObjectNode();
+                            resourceId.replace(uamiID, mapper.createObjectNode());
                             identityNode.replace("userAssignedIdentities", resourceId);
 
                             ((ObjectNode) resource).replace("identity", identityNode);
@@ -418,7 +454,7 @@ public final class AzureVMManagementServiceDelegate {
                             ((ObjectNode) jsonNode).replace("diskSizeGB", new IntNode(osDiskSize));
                         }
                         if (availabilitySetEnabled) {
-                            ObjectNode availabilitySetNode = MAPPER.createObjectNode();
+                            ObjectNode availabilitySetNode = mapper.createObjectNode();
                             availabilitySetNode.put("id", String.format(
                                     "[resourceId('Microsoft.Compute/availabilitySets', '%s')]", availabilitySet));
                             JsonNode propertiesNode = resource.get("properties");
@@ -442,7 +478,8 @@ public final class AzureVMManagementServiceDelegate {
             copyVariableIfNotBlank(tmp, properties, "imageVersion");
             copyVariableIfNotBlank(tmp, properties, "osType");
             putVariable(tmp, "ephemeralOSDisk", Boolean.toString(ephemeralOSDisk));
-            putVariableIfNotBlank(tmp, "image", template.getImageReference().getUri());
+            putVariableIfNotBlank(tmp, "image", template.getImageReference().getUri());            
+            putVariable(tmp, "spotInstance", Boolean.toString(spotInstance));
 
             // Gallery Image is a special case for custom image, reuse the logic of custom image by replacing the imageId here
             if (referenceType == ImageReferenceType.GALLERY) {
@@ -479,12 +516,12 @@ public final class AzureVMManagementServiceDelegate {
             // If using the custom script extension (vs. SSH) to startup the powershell scripts,
             // add variables for that and upload the init script to the storage account
             if (useCustomScriptExtension) {
-                putVariable(tmp, "jenkinsServerURL", Jenkins.get().getRootUrl());
+                putVariable(tmp, "jenkinsServerURL", Jenkins.getInstance().getRootUrl());
                 // Calculate the client secrets.  The secrets are based off the machine name,
-                ArrayNode clientSecretsNode = ((ObjectNode) tmp.get("variables")).putArray("clientSecrets");
+                ArrayNode clientSecretsNode = ObjectNode.class.cast(tmp.get("variables")).putArray("clientSecrets");
                 for (int i = 0; i < numberOfAgents; i++) {
                     clientSecretsNode.add(
-                            JnlpAgentReceiver.SLAVE_SECRET.mac(String.format("%s%d", vmBaseName, i)));
+                            JnlpSlaveAgentProtocol.SLAVE_SECRET.mac(String.format("%s%d", vmBaseName, i)));
                 }
                 // Upload the startup script to blob storage
                 String scriptName = String.format("%s%s", deploymentName, "init.ps1");
@@ -492,7 +529,7 @@ public final class AzureVMManagementServiceDelegate {
                 if (preInstallSshInWindows) {
                     initScript = IOUtils.toString(
                             AzureVMManagementServiceDelegate.class.getResourceAsStream(PRE_INSTALL_SSH_FILENAME),
-                            StandardCharsets.UTF_8);
+                            "UTF-8");
                 } else {
                     initScript = (String) properties.get("initScript");
                 }
@@ -509,12 +546,12 @@ public final class AzureVMManagementServiceDelegate {
                 }
                 String storageAccountKey = storageKeys.get(0).value();
 
-                final ObjectNode storageAccountKeyNode = MAPPER.createObjectNode();
+                final ObjectNode storageAccountKeyNode = mapper.createObjectNode();
                 storageAccountKeyNode.put("type", "secureString");
                 storageAccountKeyNode.put("defaultValue", storageAccountKey);
 
                 // Add the storage account key
-                ((ObjectNode) tmp.get("parameters")).replace("storageAccountKey", storageAccountKeyNode);
+                ObjectNode.class.cast(tmp.get("parameters")).replace("storageAccountKey", storageAccountKeyNode);
             }
 
             putVariable(tmp, "vmSize", template.getVirtualMachineSize());
@@ -522,6 +559,7 @@ public final class AzureVMManagementServiceDelegate {
             StandardUsernamePasswordCredentials creds = template.getVMCredentials();
 
             putVariable(tmp, "adminUsername", creds.getUsername());
+            putVariable(tmp, "adminPassword", creds.getPassword().getPlainText());
             putVariableIfNotBlank(tmp, "storageAccountName", storageAccountName);
             putVariableIfNotBlank(tmp, "storageAccountType", storageAccountType);
             putVariableIfNotBlank(tmp, "blobEndpointSuffix", blobEndpointSuffix);
@@ -537,25 +575,16 @@ public final class AzureVMManagementServiceDelegate {
                     putVariable(tmp, "virtualNetworkResourceGroupName", resourceGroupName);
                 }
             } else {
-                addDefaultVNetResourceNode(tmp, resourceGroupName, cloud);
-            }
-
-            if (template.isSpotInstance()) {
-                addSpotInstance(tmp);
+                addDefaultVNetResourceNode(tmp, mapper, resourceGroupName, cloud);
             }
 
             if (!(Boolean) properties.get("usePrivateIP")) {
-                addPublicIPResourceNode(tmp, cloud);
+                addPublicIPResourceNode(tmp, mapper, cloud);
             }
 
             if (StringUtils.isNotBlank((String) properties.get("nsgName"))) {
-                addNSGNode(tmp, (String) properties.get("nsgName"));
+                addNSGNode(tmp, mapper, (String) properties.get("nsgName"));
             }
-
-            final ObjectNode parameters = MAPPER.createObjectNode();
-
-            defineParameter(tmp, "adminPassword", "secureString");
-            putParameter(parameters, "adminPassword", creds.getPassword().getPlainText());
 
             // Register the deployment for cleanup
             deploymentRegistrar.registerDeployment(
@@ -565,7 +594,7 @@ public final class AzureVMManagementServiceDelegate {
             azureClient.deployments().define(deploymentName)
                     .withExistingResourceGroup(template.getResourceGroupName())
                     .withTemplate(tmp.toString())
-                    .withParameters(parameters.toString())
+                    .withParameters("{}")
                     .withMode(DeploymentMode.INCREMENTAL)
                     .beginCreate();
             return new AzureVMDeploymentInfo(deploymentName, vmBaseName, numberOfAgents);
@@ -583,18 +612,6 @@ public final class AzureVMManagementServiceDelegate {
         } finally {
             if (embeddedTemplate != null) {
                 embeddedTemplate.close();
-            }
-        }
-    }
-
-    private void addSpotInstance(JsonNode template) {
-        ArrayNode resources = (ArrayNode) template.get("resources");
-        for (JsonNode resource : resources) {
-            String type = resource.get("type").asText();
-            if (type.contains("virtualMachine")) {
-                ObjectNode properties = (ObjectNode) resource.get("properties");
-                properties.put("priority", "Spot");
-                properties.put("evictionPolicy", "Delete");
             }
         }
     }
@@ -637,23 +654,8 @@ public final class AzureVMManagementServiceDelegate {
     }
 
     private static void putVariable(JsonNode template, String name, String value) {
-        ((ObjectNode) template.get("variables")).put(name, value);
+        ObjectNode.class.cast(template.get("variables")).put(name, value);
     }
-
-    private static void putParameter(ObjectNode template, String name, String value) {
-        ObjectNode objectNode = MAPPER.createObjectNode();
-        objectNode.put("value", value);
-
-        template.set(name, objectNode);
-    }
-
-    private static void defineParameter(JsonNode template, String name, String value) {
-        ObjectNode objectNode = MAPPER.createObjectNode();
-        objectNode.put("type", value);
-
-        ((ObjectNode) template.get("parameters")).set(name, objectNode);
-    }
-
 
     private static void putVariableIfNotBlank(JsonNode template, String name, String value) {
         if (StringUtils.isNotBlank(value)) {
@@ -671,22 +673,23 @@ public final class AzureVMManagementServiceDelegate {
 
     private void addPublicIPResourceNode(
             JsonNode template,
+            ObjectMapper mapper,
             AzureVMCloud cloud) throws IOException {
 
         final String ipName = "variables('vmName'), copyIndex(), 'IPName'";
         try (InputStream fragmentStream =
                      AzureVMManagementServiceDelegate.class.getResourceAsStream(PUBLIC_IP_FRAGMENT_FILENAME)) {
 
-            final JsonNode publicIPFragment = MAPPER.readTree(fragmentStream);
+            final JsonNode publicIPFragment = mapper.readTree(fragmentStream);
             injectCustomTag(publicIPFragment, cloud);
             // Add the virtual network fragment
-            ((ArrayNode) template.get("resources")).add(publicIPFragment);
+            ArrayNode.class.cast(template.get("resources")).add(publicIPFragment);
 
             // Because we created/updated this in the template, we need to add the appropriate
             // dependsOn node to the networkInterface and the ipConfigurations properties
             // "[concat('Microsoft.Network/publicIPAddresses/', variables('vmName'), copyIndex(), 'IPName')]"
             // Find the network interfaces node
-            ArrayNode resourcesNodes = (ArrayNode) template.get("resources");
+            ArrayNode resourcesNodes = ArrayNode.class.cast(template.get("resources"));
             Iterator<JsonNode> resourcesNodesIter = resourcesNodes.elements();
             while (resourcesNodesIter.hasNext()) {
                 JsonNode resourcesNode = resourcesNodesIter.next();
@@ -695,13 +698,13 @@ public final class AzureVMManagementServiceDelegate {
                     continue;
                 }
                 // Find the dependsOn node
-                ArrayNode dependsOnNode = (ArrayNode) resourcesNode.get("dependsOn");
+                ArrayNode dependsOnNode = ArrayNode.class.cast(resourcesNode.get("dependsOn"));
                 // Add to the depends on node.
                 dependsOnNode.add("[concat('Microsoft.Network/publicIPAddresses/'," + ipName + ")]");
 
                 //Find the ipConfigurations/ipconfig1 node
                 ArrayNode ipConfigurationsNode =
-                        (ArrayNode) resourcesNode.get("properties").get("ipConfigurations");
+                        ArrayNode.class.cast(resourcesNode.get("properties").get("ipConfigurations"));
                 Iterator<JsonNode> ipConfigNodeIter = ipConfigurationsNode.elements();
                 while (ipConfigNodeIter.hasNext()) {
                     JsonNode ipConfigNode = ipConfigNodeIter.next();
@@ -710,9 +713,9 @@ public final class AzureVMManagementServiceDelegate {
                         continue;
                     }
                     //find the properties node
-                    ObjectNode propertiesNode = (ObjectNode) ipConfigNode.get("properties");
+                    ObjectNode propertiesNode = ObjectNode.class.cast(ipConfigNode.get("properties"));
                     //add the publicIPAddress node
-                    ObjectNode publicIPIdNode = MAPPER.createObjectNode();
+                    ObjectNode publicIPIdNode = mapper.createObjectNode();
                     publicIPIdNode.put("id", "[resourceId('Microsoft.Network/publicIPAddresses', concat("
                             + ipName
                             + "))]");
@@ -727,11 +730,12 @@ public final class AzureVMManagementServiceDelegate {
 
     private static void addNSGNode(
             JsonNode template,
-            String nsgName) {
+            ObjectMapper mapper,
+            String nsgName) throws IOException {
 
-        ((ObjectNode) template.get("variables")).put("nsgName", nsgName);
+        ObjectNode.class.cast(template.get("variables")).put("nsgName", nsgName);
 
-        ArrayNode resourcesNodes = (ArrayNode) template.get("resources");
+        ArrayNode resourcesNodes = ArrayNode.class.cast(template.get("resources"));
         Iterator<JsonNode> resourcesNodesIter = resourcesNodes.elements();
         while (resourcesNodesIter.hasNext()) {
             JsonNode resourcesNode = resourcesNodesIter.next();
@@ -740,7 +744,7 @@ public final class AzureVMManagementServiceDelegate {
                 continue;
             }
 
-            ObjectNode nsgNode = MAPPER.createObjectNode();
+            ObjectNode nsgNode = mapper.createObjectNode();
             nsgNode.put(
                     "id",
                     "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]"
@@ -748,7 +752,7 @@ public final class AzureVMManagementServiceDelegate {
 
             // Find the properties node
             // We will attach the provided NSG and not check if it's valid because that's done in the verification step
-            ObjectNode propertiesNode = (ObjectNode) resourcesNode.get("properties");
+            ObjectNode propertiesNode = ObjectNode.class.cast(resourcesNode.get("properties"));
             propertiesNode.set("networkSecurityGroup", nsgNode);
             break;
         }
@@ -757,6 +761,7 @@ public final class AzureVMManagementServiceDelegate {
 
     private void addDefaultVNetResourceNode(
             JsonNode template,
+            ObjectMapper mapper,
             String resourceGroupName,
             AzureVMCloud cloud) throws IOException {
         InputStream fragmentStream = null;
@@ -764,25 +769,25 @@ public final class AzureVMManagementServiceDelegate {
             // Add the definition of the vnet and subnet into the template
             final String virtualNetworkName = Constants.DEFAULT_VNET_NAME;
             final String subnetName = Constants.DEFAULT_SUBNET_NAME;
-            ((ObjectNode) template.get("variables")).put("virtualNetworkName", virtualNetworkName);
-            ((ObjectNode) template.get("variables")).put(
+            ObjectNode.class.cast(template.get("variables")).put("virtualNetworkName", virtualNetworkName);
+            ObjectNode.class.cast(template.get("variables")).put(
                     "virtualNetworkResourceGroupName", resourceGroupName);
-            ((ObjectNode) template.get("variables")).put("subnetName", subnetName);
+            ObjectNode.class.cast(template.get("variables")).put("subnetName", subnetName);
 
             // Read the vnet fragment
             fragmentStream = AzureVMManagementServiceDelegate.class.getResourceAsStream(
                     VIRTUAL_NETWORK_TEMPLATE_FRAGMENT_FILENAME);
 
-            final JsonNode virtualNetworkFragment = MAPPER.readTree(fragmentStream);
+            final JsonNode virtualNetworkFragment = mapper.readTree(fragmentStream);
             injectCustomTag(virtualNetworkFragment, cloud);
             // Add the virtual network fragment
-            ((ArrayNode) template.get("resources")).add(virtualNetworkFragment);
+            ArrayNode.class.cast(template.get("resources")).add(virtualNetworkFragment);
 
             // Because we created/updated this in the template, we need to add the appropriate
             // dependsOn node to the networkInterface
             // Microsoft.Network/virtualNetworks/<vnet name>
             // Find the network interfaces node
-            ArrayNode resourcesNodes = (ArrayNode) template.get("resources");
+            ArrayNode resourcesNodes = ArrayNode.class.cast(template.get("resources"));
             Iterator<JsonNode> resourcesNodesIter = resourcesNodes.elements();
             while (resourcesNodesIter.hasNext()) {
                 JsonNode resourcesNode = resourcesNodesIter.next();
@@ -791,11 +796,13 @@ public final class AzureVMManagementServiceDelegate {
                     continue;
                 }
                 // Find the dependsOn node
-                ArrayNode dependsOnNode = (ArrayNode) resourcesNode.get("dependsOn");
+                ArrayNode dependsOnNode = ArrayNode.class.cast(resourcesNode.get("dependsOn"));
                 // Add to the depends on node.
                 dependsOnNode.add("[concat('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]");
                 break;
             }
+        } catch (Exception e) {
+            throw e;
         } finally {
             if (fragmentStream != null) {
                 fragmentStream.close();
@@ -803,7 +810,7 @@ public final class AzureVMManagementServiceDelegate {
         }
     }
 
-    private static String paddedScriptForPageBlob(String sourceString) {
+    private static String paddedScriptForPageBlob(String sourceString) throws Exception {
         /*Page blob must align to 512-byte page boundaries*/
         final int pageSize = 512;
         int currentStringLength = sourceString.getBytes(StandardCharsets.UTF_8).length;
@@ -826,7 +833,7 @@ public final class AzureVMManagementServiceDelegate {
      * @param targetScriptName Script to upload
      * @param initScript       Specify initScript
      * @return URI of script
-     * @throws AzureCloudException when uploading to blob storage fails
+     * @throws AzureCloudException
      */
     public String uploadCustomScript(
             AzureVMAgentTemplate template,
@@ -878,6 +885,9 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Sets properties of virtual machine like IP and ssh port.
      *
+     * @param azureAgent
+     * @param template
+     * @throws AzureCloudException
      */
     public void setVirtualMachineDetails(
             AzureVMAgent azureAgent, AzureVMAgentTemplate template) throws AzureCloudException {
@@ -889,7 +899,7 @@ public final class AzureVMManagementServiceDelegate {
         final PublicIPAddress publicIP = vm.getPrimaryPublicIPAddress();
         String publicIPStr = "";
         String privateIP = vm.getPrimaryNetworkInterface().primaryPrivateIP();
-        String fqdn;
+        String fqdn = "";
         if (publicIP == null) {
             fqdn = privateIP;
             LOGGER.log(Level.INFO, "The Azure agent doesn't have a public IP. Will use the private IP");
@@ -915,7 +925,7 @@ public final class AzureVMManagementServiceDelegate {
     public void attachPublicIP(AzureVMAgent azureAgent, AzureVMAgentTemplate template)
             throws AzureCloudException {
 
-        VirtualMachine vm;
+        VirtualMachine vm = null;
         try {
             vm = azureClient.virtualMachines().getByResourceGroup(template.getResourceGroupName(), azureAgent.getNodeName());
         } catch (Exception e) {
@@ -961,7 +971,7 @@ public final class AzureVMManagementServiceDelegate {
             String resourceGroupName) throws AzureCloudException {
         LOGGER.log(Level.INFO, "AzureVMManagementServiceDelegate: virtualMachineExists: check for {0}", vmName);
 
-        VirtualMachine vm;
+        VirtualMachine vm = null;
         try {
             vm = azureClient.virtualMachines().getByResourceGroup(resourceGroupName, vmName);
         } catch (Exception e) {
@@ -1005,6 +1015,12 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Creates Azure agent object with necessary info.
      *
+     * @param vmname
+     * @param deploymentName
+     * @param template
+     * @param osType
+     * @return
+     * @throws AzureCloudException
      */
     public AzureVMAgent parseResponse(
             ProvisioningActivity.Id id,
@@ -1030,7 +1046,7 @@ public final class AzureVMManagementServiceDelegate {
 
             final PublicIPAddress publicIP = vm.getPrimaryPublicIPAddress();
             String privateIP = vm.getPrimaryNetworkInterface().primaryPrivateIP();
-            String fqdn;
+            String fqdn = "";
             if (publicIP == null) {
                 fqdn = privateIP;
             } else {
@@ -1069,10 +1085,14 @@ public final class AzureVMManagementServiceDelegate {
                     (Boolean) properties.get("enableUAMI"),
                     (Boolean) properties.get("ephemeralOSDisk"),
                     (String) properties.get("uamiID"),
+                    (Boolean) properties.get("spotInstance"),
                     template,
                     fqdn,
                     template.getJavaPath());
-        } catch (FormException | IOException e) {
+        } catch (FormException e) {
+            throw AzureCloudException.create("AzureVMManagementServiceDelegate: parseResponse: "
+                    + "Exception occurred while creating agent object", e);
+        } catch (IOException e) {
             throw AzureCloudException.create("AzureVMManagementServiceDelegate: parseResponse: "
                     + "Exception occurred while creating agent object", e);
         }
@@ -1082,6 +1102,7 @@ public final class AzureVMManagementServiceDelegate {
      * Gets a map of available locations mapping display name -> name (usable in
      * template).
      *
+     * @return
      */
     private static Set<String> getAvailableLocationsStandard() {
         final Set<String> locations = new HashSet<>();
@@ -1372,47 +1393,67 @@ public final class AzureVMManagementServiceDelegate {
 
     private static Map<String, Map<String, String>> getDefaultImageProperties() {
         final Map<String, Map<String, String>> imageProperties = new HashMap<>();
-        imageProperties.put(Constants.WINDOWS_SERVER_2016, new HashMap<>());
-        imageProperties.put(Constants.WINDOWS_SERVER_2019, new HashMap<>());
-        imageProperties.put(Constants.UBUNTU_1604_LTS, new HashMap<>());
-        imageProperties.put(Constants.UBUNTU_2004_LTS, new HashMap<>());
+        imageProperties.put(Constants.WINDOWS_SERVER_2016, new HashMap<String, String>());
+        imageProperties.put(Constants.UBUNTU_1604_LTS, new HashMap<String, String>());
 
-        imageProperties(imageProperties, Constants.WINDOWS_SERVER_2016, "MicrosoftWindowsServer", "WindowsServer", "2016-Datacenter", "2016-Datacenter-with-Containers", Constants.OS_TYPE_WINDOWS);
-        imageProperties(imageProperties, Constants.WINDOWS_SERVER_2019, "MicrosoftWindowsServer", "WindowsServer", "2019-Datacenter", "2019-Datacenter-with-Containers", Constants.OS_TYPE_WINDOWS);
-        imageProperties(imageProperties, Constants.UBUNTU_1604_LTS, "Canonical", "UbuntuServer", "16.04-LTS", "16.04-LTS", Constants.OS_TYPE_LINUX);
-        imageProperties(imageProperties, Constants.UBUNTU_2004_LTS, "canonical", "0001-com-ubuntu-server-focal", "20_04-lts-gen2", "20_04-lts-gen2", Constants.OS_TYPE_LINUX);
+        imageProperties.get(Constants.WINDOWS_SERVER_2016).put(
+                Constants.DEFAULT_IMAGE_PUBLISHER, "MicrosoftWindowsServer");
+        imageProperties.get(Constants.WINDOWS_SERVER_2016).put(Constants.DEFAULT_IMAGE_OFFER, "WindowsServer");
+        imageProperties.get(Constants.WINDOWS_SERVER_2016).put(Constants.DEFAULT_IMAGE_SKU, "2016-Datacenter");
+        imageProperties.get(Constants.WINDOWS_SERVER_2016).put(Constants.DEFAULT_DOCKER_IMAGE_SKU, "2016-Datacenter-with-Containers");
+        imageProperties.get(Constants.WINDOWS_SERVER_2016).put(Constants.DEFAULT_IMAGE_VERSION, "latest");
+        imageProperties.get(Constants.WINDOWS_SERVER_2016).put(Constants.DEFAULT_OS_TYPE, Constants.OS_TYPE_WINDOWS);
+        imageProperties.get(Constants.WINDOWS_SERVER_2016).put(
+                Constants.DEFAULT_LAUNCH_METHOD, Constants.LAUNCH_METHOD_SSH);
+
+        imageProperties.get(Constants.UBUNTU_1604_LTS).put(Constants.DEFAULT_IMAGE_PUBLISHER, "Canonical");
+        imageProperties.get(Constants.UBUNTU_1604_LTS).put(Constants.DEFAULT_IMAGE_OFFER, "UbuntuServer");
+        imageProperties.get(Constants.UBUNTU_1604_LTS).put(Constants.DEFAULT_IMAGE_SKU, "16.04-LTS");
+        imageProperties.get(Constants.UBUNTU_1604_LTS).put(Constants.DEFAULT_DOCKER_IMAGE_SKU, "16.04-LTS");
+        imageProperties.get(Constants.UBUNTU_1604_LTS).put(Constants.DEFAULT_IMAGE_VERSION, "latest");
+        imageProperties.get(Constants.UBUNTU_1604_LTS).put(Constants.DEFAULT_OS_TYPE, Constants.OS_TYPE_LINUX);
+        imageProperties.get(Constants.UBUNTU_1604_LTS).put(
+                Constants.DEFAULT_LAUNCH_METHOD, Constants.LAUNCH_METHOD_SSH);
         return imageProperties;
-    }
-
-    private static void imageProperties(
-            Map<String, Map<String, String>> imageProperties,
-            String imageName,
-            String defaultImagePublisher,
-            String offer,
-            String sku,
-            String dockerImageSku,
-            String osType
-    ) {
-        imageProperties.get(imageName).put(Constants.DEFAULT_IMAGE_PUBLISHER, defaultImagePublisher);
-        imageProperties.get(imageName).put(Constants.DEFAULT_IMAGE_OFFER, offer);
-        imageProperties.get(imageName).put(Constants.DEFAULT_IMAGE_SKU, sku);
-        imageProperties.get(imageName).put(Constants.DEFAULT_DOCKER_IMAGE_SKU, dockerImageSku);
-        imageProperties.get(imageName).put(Constants.DEFAULT_IMAGE_VERSION, "latest");
-        imageProperties.get(imageName).put(Constants.DEFAULT_OS_TYPE, osType);
-        imageProperties.get(imageName).put(Constants.DEFAULT_LAUNCH_METHOD, Constants.LAUNCH_METHOD_SSH);
     }
 
     private static Map<String, Map<String, String>> getPreInstalledToolsScript() {
         final Map<String, Map<String, String>> tools = new HashMap<>();
-        tools.put(Constants.WINDOWS_SERVER_2016, new HashMap<>());
-        tools.put(Constants.WINDOWS_SERVER_2019, new HashMap<>());
-        tools.put(Constants.UBUNTU_1604_LTS, new HashMap<>());
-        tools.put(Constants.UBUNTU_2004_LTS, new HashMap<>());
+        tools.put(Constants.WINDOWS_SERVER_2016, new HashMap<String, String>());
+        tools.put(Constants.UBUNTU_1604_LTS, new HashMap<String, String>());
         try {
-            windows(Constants.WINDOWS_SERVER_2016, tools);
-            windows(Constants.WINDOWS_SERVER_2019, tools);
-            ubuntu(Constants.UBUNTU_1604_LTS, tools);
-            ubuntu(Constants.UBUNTU_2004_LTS, tools);
+            tools.get(Constants.WINDOWS_SERVER_2016).put(
+                    Constants.INSTALL_JAVA,
+                    IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
+                            INSTALL_JAVA_WINDOWS_FILENAME), "UTF-8"));
+            tools.get(Constants.WINDOWS_SERVER_2016).put(
+                    Constants.INSTALL_MAVEN,
+                    IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
+                            INSTALL_MAVEN_WINDOWS_FILENAME), "UTF-8"));
+            tools.get(Constants.WINDOWS_SERVER_2016).put(
+                    Constants.INSTALL_GIT,
+                    IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
+                            INSTALL_GIT_WINDOWS_FILENAME), "UTF-8"));
+            tools.get(Constants.WINDOWS_SERVER_2016).put(
+                    Constants.INSTALL_JNLP,
+                    IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
+                            INSTALL_JNLP_WINDOWS_FILENAME), "UTF-8"));
+            tools.get(Constants.UBUNTU_1604_LTS).put(
+                    Constants.INSTALL_JAVA,
+                    IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
+                            INSTALL_JAVA_UBUNTU_FILENAME), "UTF-8"));
+            tools.get(Constants.UBUNTU_1604_LTS).put(
+                    Constants.INSTALL_MAVEN,
+                    IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
+                            INSTALL_MAVEN_UBUNTU_FILENAME), "UTF-8"));
+            tools.get(Constants.UBUNTU_1604_LTS).put(
+                    Constants.INSTALL_GIT,
+                    IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
+                            INSTALL_GIT_UBUNTU_FILENAME), "UTF-8"));
+            tools.get(Constants.UBUNTU_1604_LTS).put(
+                    Constants.INSTALL_DOCKER,
+                    IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
+                            INSTALL_DOCKER_UBUNTU_FILENAME), "UTF-8"));
 
             return tools;
         } catch (IOException e) {
@@ -1422,44 +1463,6 @@ public final class AzureVMManagementServiceDelegate {
                     e);
             return tools;
         }
-    }
-
-    private static void ubuntu(String imageName, Map<String, Map<String, String>> tools) throws IOException {
-        tools.get(imageName).put(
-                Constants.INSTALL_JAVA,
-                IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
-                        INSTALL_JAVA_UBUNTU_FILENAME), StandardCharsets.UTF_8));
-        tools.get(imageName).put(
-                Constants.INSTALL_MAVEN,
-                IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
-                        INSTALL_MAVEN_UBUNTU_FILENAME), StandardCharsets.UTF_8));
-        tools.get(imageName).put(
-                Constants.INSTALL_GIT,
-                IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
-                        INSTALL_GIT_UBUNTU_FILENAME), StandardCharsets.UTF_8));
-        tools.get(imageName).put(
-                Constants.INSTALL_DOCKER,
-                IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
-                        INSTALL_DOCKER_UBUNTU_FILENAME), StandardCharsets.UTF_8));
-    }
-
-    private static void windows(String imageName, Map<String, Map<String, String>> tools) throws IOException {
-        tools.get(imageName).put(
-                Constants.INSTALL_JAVA,
-                IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
-                        INSTALL_JAVA_WINDOWS_FILENAME), StandardCharsets.UTF_8));
-        tools.get(imageName).put(
-                Constants.INSTALL_MAVEN,
-                IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
-                        INSTALL_MAVEN_WINDOWS_FILENAME), StandardCharsets.UTF_8));
-        tools.get(imageName).put(
-                Constants.INSTALL_GIT,
-                IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
-                        INSTALL_GIT_WINDOWS_FILENAME), StandardCharsets.UTF_8));
-        tools.get(imageName).put(
-                Constants.INSTALL_JNLP,
-                IOUtils.toString(AzureVMManagementServiceDelegate.class.getResourceAsStream(
-                        INSTALL_JNLP_WINDOWS_FILENAME), StandardCharsets.UTF_8));
     }
 
     /**
@@ -1558,9 +1561,13 @@ public final class AzureVMManagementServiceDelegate {
 
     public String verifyConfiguration(final String resourceGroupName) {
 
-        Callable<String> task = () -> {
-            azureClient.storageAccounts().getByResourceGroup(resourceGroupName, "CI_SYSTEM");
-            return Constants.OP_SUCCESS;
+        Callable<String> task = new Callable<String>() {
+
+            @Override
+            public String call() throws Exception {
+                azureClient.storageAccounts().getByResourceGroup(resourceGroupName, "CI_SYSTEM");
+                return Constants.OP_SUCCESS;
+            }
         };
 
         try {
@@ -1604,6 +1611,7 @@ public final class AzureVMManagementServiceDelegate {
      * @param vmName            Virtual machine name.
      * @param resourceGroupName Resource group name.
      * @return Virtual machine status.
+     * @throws AzureCloudException
      */
 
     private VMStatus getVirtualMachineStatus(
@@ -1633,6 +1641,9 @@ public final class AzureVMManagementServiceDelegate {
      * Checks if VM is reachable and in a valid state to connect (or getting
      * ready to do so).
      *
+     * @param agent
+     * @return
+     * @throws AzureCloudException
      */
     public boolean isVMAliveOrHealthy(AzureVMAgent agent) throws AzureCloudException {
         VMStatus status = getVirtualMachineStatus(agent.getNodeName(), agent.getResourceGroupName());
@@ -1669,6 +1680,7 @@ public final class AzureVMManagementServiceDelegate {
      * based off of the VMs that the current credential set has access to. It
      * also does not deal with the classic, model. So keep this in mind.
      *
+     * @param resourceGroupName
      * @return Total VM count
      */
     public int getVirtualMachineCount(String cloudName, String resourceGroupName) {
@@ -1704,6 +1716,8 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Shutdowns Azure virtual machine.
      *
+     * @param agent
+     * @throws Exception
      */
     public void shutdownVirtualMachine(AzureVMAgent agent) {
         LOGGER.log(Level.INFO, "AzureVMManagementServiceDelegate: shutdownVirtualMachine: called for {0}",
@@ -1722,6 +1736,8 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Deletes Azure virtual machine.
      *
+     * @param agent
+     * @throws Exception
      */
     public static void terminateVirtualMachine(AzureVMAgent agent) throws AzureCloudException {
         AzureVMManagementServiceDelegate delegate = agent.getServiceDelegate();
@@ -1735,6 +1751,7 @@ public final class AzureVMManagementServiceDelegate {
      *
      * @param vmName            VM name
      * @param resourceGroupName Resource group containing the VM
+     * @throws Exception
      */
     public void terminateVirtualMachine(
             String vmName,
@@ -1747,6 +1764,8 @@ public final class AzureVMManagementServiceDelegate {
      *
      * @param vmName            VM name
      * @param resourceGroupName Resource group containing the VM
+     * @param executionEngine
+     * @throws Exception
      */
     public void terminateVirtualMachine(
             final String vmName,
@@ -1800,9 +1819,12 @@ public final class AzureVMManagementServiceDelegate {
             }
         } finally {
             LOGGER.log(Level.INFO, "Clean operation starting for {0} NIC and IP", vmName);
-            executionEngine.executeAsync((Callable<Void>) () -> {
-                removeIPName(resourceGroupName, vmName);
-                return null;
+            executionEngine.executeAsync(new Callable<Void>() {
+                @Override
+                public Void call() throws Exception {
+                    removeIPName(resourceGroupName, vmName);
+                    return null;
+                }
             }, new NoRetryStrategy());
         }
 
@@ -1849,9 +1871,12 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Remove the IP name.
      *
+     * @param resourceGroupName
+     * @param vmName
+     * @throws AzureCloudException
      */
     public void removeIPName(String resourceGroupName,
-                             String vmName) {
+                             String vmName) throws AzureCloudException {
         final String nic = vmName + "NIC";
         try {
             LOGGER.log(Level.INFO, "Remove NIC {0}", nic);
@@ -1872,6 +1897,8 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Restarts Azure virtual machine.
      *
+     * @param agent
+     * @throws AzureCloudException
      */
     public void restartVirtualMachine(AzureVMAgent agent) throws AzureCloudException {
         try {
@@ -1885,6 +1912,8 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Starts Azure virtual machine.
      *
+     * @param agent
+     * @throws Exception
      */
     public void startVirtualMachine(AzureVMAgent agent) throws AzureCloudException {
         LOGGER.log(Level.INFO, "AzureVMManagementServiceDelegate: startVirtualMachine: {0}", agent.getNodeName());
@@ -1919,6 +1948,9 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Returns virtual network site properties.
      *
+     * @param virtualNetworkName
+     * @param resourceGroupName
+     * @return
      */
     public Network getVirtualNetwork(String virtualNetworkName, String resourceGroupName) {
         try {
@@ -1931,8 +1963,42 @@ public final class AzureVMManagementServiceDelegate {
     }
 
     /**
+     * Gets a final location name from a display name location.
+     *
+     * @param location
+     * @return
+     */
+    private static String getLocationName(String location) {
+        try {
+            return Region.findByLabelOrName(location).name();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
      * Verifies template configuration by making server calls if needed.
      *
+     * @param templateName
+     * @param labels
+     * @param location
+     * @param virtualMachineSize
+     * @param storageAccountName
+     * @param noOfParallelJobs
+     * @param builtInImage
+     * @param osType
+     * @param agentLaunchMethod
+     * @param initScript
+     * @param credentialsId
+     * @param virtualNetworkName
+     * @param virtualNetworkResourceGroupName
+     * @param subnetName
+     * @param retentionStrategy
+     * @param jvmOptions
+     * @param returnOnSingleError
+     * @param resourceGroupName
+     * @param usePrivateIP
+     * @return
      */
     public List<String> verifyTemplate(
             String templateName,
@@ -1959,7 +2025,7 @@ public final class AzureVMManagementServiceDelegate {
             boolean usePrivateIP,
             String nsgName) {
 
-        List<String> errors = new ArrayList<>();
+        List<String> errors = new ArrayList<String>();
 
         // Load configuration
         try {
@@ -2058,34 +2124,58 @@ public final class AzureVMManagementServiceDelegate {
             final boolean usePrivateIP,
             final String nsgName) {
 
-        List<Callable<String>> verificationTaskList = new ArrayList<>();
+        List<Callable<String>> verificationTaskList = new ArrayList<Callable<String>>();
 
         // Callable for virtual network.
-        Callable<String> callVerifyVirtualNetwork = () -> verifyVirtualNetwork(
-                virtualNetworkName,
-                virtualNetworkResourceGroupName,
-                subnetName,
-                usePrivateIP,
-                resourceGroupName);
+        Callable<String> callVerifyVirtualNetwork = new Callable<String>() {
+
+            @Override
+            public String call() throws Exception {
+                return verifyVirtualNetwork(
+                        virtualNetworkName,
+                        virtualNetworkResourceGroupName,
+                        subnetName,
+                        usePrivateIP,
+                        resourceGroupName);
+            }
+        };
         verificationTaskList.add(callVerifyVirtualNetwork);
 
         // Callable for VM image.
-        Callable<String> callVerifyVirtualMachineImage = () -> verifyVirtualMachineImage(
-                location,
-                storageAccountName,
-                imageTopLevelType,
-                imageReferenceType,
-                builtInImage
-        );
+        Callable<String> callVerifyVirtualMachineImage = new Callable<String>() {
+
+            @Override
+            public String call() throws Exception {
+                return verifyVirtualMachineImage(
+                        location,
+                        storageAccountName,
+                        imageTopLevelType,
+                        imageReferenceType,
+                        builtInImage
+                );
+            }
+        };
         verificationTaskList.add(callVerifyVirtualMachineImage);
 
         // Callable for storage account virtual network.
-        Callable<String> callVerifyStorageAccountName = () -> verifyStorageAccountName(
-                resourceGroupName, storageAccountName, storageAccountType);
+        Callable<String> callVerifyStorageAccountName = new Callable<String>() {
+
+            @Override
+            public String call() throws Exception {
+                return verifyStorageAccountName(
+                        resourceGroupName, storageAccountName, storageAccountType);
+            }
+        };
         verificationTaskList.add(callVerifyStorageAccountName);
 
         // Callable for NSG.
-        Callable<String> callVerifyNSG = () -> verifyNSG(resourceGroupName, nsgName);
+        Callable<String> callVerifyNSG = new Callable<String>() {
+
+            @Override
+            public String call() throws Exception {
+                return verifyNSG(resourceGroupName, nsgName);
+            }
+        };
         verificationTaskList.add(callVerifyNSG);
 
         try {
@@ -2341,7 +2431,11 @@ public final class AzureVMManagementServiceDelegate {
             }
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Verification failed for storage account name", e);
-            return Messages.Azure_GC_Template_SA_Already_Exists();
+            if (!isAvailable) {
+                return Messages.Azure_GC_Template_SA_Already_Exists();
+            } else {
+                return Messages.Azure_GC_Template_SA_Cant_Validate();
+            }
         }
     }
 
@@ -2435,6 +2529,9 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Create Azure resource Group.
      *
+     * @param azureClient
+     * @param locationName
+     * @param resourceGroupName
      */
     private void createAzureResourceGroup(
             Azure azureClient, String locationName, String resourceGroupName,
@@ -2458,6 +2555,10 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Create storage Account.
      *
+     * @param azureClient
+     * @param targetStorageAccount
+     * @param location
+     * @param resourceGroupName
      */
     private void createStorageAccount(
             Azure azureClient,
@@ -2493,6 +2594,9 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Get StorageAccount by resourceGroup name and storageAccount name.
      *
+     * @param azureClient
+     * @param targetStorageAccount
+     * @param resourceGroupName
      * @return StorageAccount object
      */
     private StorageAccount getStorageAccount(
@@ -2509,6 +2613,8 @@ public final class AzureVMManagementServiceDelegate {
      * Get the blob endpoint suffix for , it's like ".blob.core.windows.net/" for public azure
      * or ".blob.core.chinacloudapi.cn" for Azure China.
      *
+     * @param storageAccount
+     * @return endpointSuffix
      */
     public static String getBlobEndpointSuffixForTemplate(StorageAccount storageAccount) {
         return getBlobEndPointSuffix(
@@ -2519,6 +2625,8 @@ public final class AzureVMManagementServiceDelegate {
      * Get the blob endpoint suffix for constructing CloudStorageAccount  , it's like "core.windows.net"
      * or "core.chinacloudapi.cn" for AzureChina.
      *
+     * @param storageAccount
+     * @return endpointSuffix
      */
     public static String getBlobEndpointSuffixForCloudStorageAccount(StorageAccount storageAccount) {
         return getBlobEndPointSuffix(storageAccount, Constants.BLOB_ENDPOINT_SUFFIX_STARTKEY, "", "");
@@ -2527,6 +2635,7 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Get the blob endpoint substring with prefix and suffix.
      *
+     * @param storageAccount
      * @param startKey       uses to get the start position of sub string,
      *                       if it's null or empty then whole input string will be used
      * @param prefix         the prefix of substring will be added, if it's null or empty then it will not be added'
@@ -2554,11 +2663,12 @@ public final class AzureVMManagementServiceDelegate {
      * @param prefix   the prefix of substring will be added, if it's null or empty then it will not be added'
      * @param suffix   the suffix will be append to substring if substring doesn't contain it,
      *                 if it's null or empty then it will not be added
+     * @return
      */
     private static String getSubString(String uri, String startKey, String prefix, String suffix) {
         String subString = null;
         if (StringUtils.isNotBlank(uri)) {
-            if (StringUtils.isNotEmpty(startKey) && uri.contains(startKey)) {
+            if (StringUtils.isNotEmpty(startKey) && uri.indexOf(startKey) >= 0) {
                 subString = uri.substring(uri.indexOf(startKey));
             } else {
                 subString = uri;
@@ -2575,6 +2685,7 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Get CloudStorageAccount.
      *
+     * @param storageAccount
      * @return CloudStorageAccount object
      */
     public static CloudStorageAccount getCloudStorageAccount(StorageAccount storageAccount) throws AzureCloudException {
@@ -2611,6 +2722,9 @@ public final class AzureVMManagementServiceDelegate {
     /**
      * Get CloudBlobContainer.
      *
+     * @param account
+     * @param containerName
+     * @return CloudBlobContainer
      */
     public static CloudBlobContainer getCloudBlobContainer(
             CloudStorageAccount account, String containerName) throws AzureCloudException {
@@ -2629,7 +2743,7 @@ public final class AzureVMManagementServiceDelegate {
             Azure azureClient, String resourceGroupName, String targetStorageAccount, String blobContainerName)
             throws AzureCloudException {
 
-        StorageAccount storageAccount;
+        StorageAccount storageAccount = null;
         try {
             storageAccount = azureClient.storageAccounts()
                     .getByResourceGroup(resourceGroupName, targetStorageAccount);

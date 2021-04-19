@@ -22,7 +22,6 @@ import com.cloudbees.plugins.credentials.domains.DomainRequirement;
 import com.microsoft.azure.PagedList;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.compute.AvailabilitySet;
-import com.microsoft.azure.management.compute.DiskSkuTypes;
 import com.microsoft.azure.management.storage.SkuName;
 import com.microsoft.azure.management.storage.StorageAccount;
 import com.microsoft.azure.vmagent.builders.AdvancedImage;
@@ -76,7 +75,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -255,6 +253,8 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
 
     private final boolean ephemeralOSDisk;
 
+    private final boolean spotInstance;
+
     private int osDiskSize;
 
     private String newStorageAccountName;
@@ -262,8 +262,6 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
     private String existingStorageAccountName;
 
     private String storageAccountType;
-
-    private String osDiskStorageAccountType;
 
     private final int noOfParallelJobs;
 
@@ -308,8 +306,6 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
 
     private boolean usePrivateIP;
 
-    private boolean spotInstance;
-
     private final String nsgName;
 
     private final String jvmOptions;
@@ -341,8 +337,6 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
     private String javaPath;
 
     private RetentionStrategy retentionStrategy;
-
-    private int maximumDeploymentSize;
 
 
     // deprecated fields
@@ -408,7 +402,8 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
             boolean doNotUseMachineIfInitFails,
             boolean enableMSI,
             boolean enableUAMI,
-            String uamiID) {
+            String uamiID,
+            boolean spotInstance) {
         this.templateName = templateName;
         this.templateDesc = templateDesc;
         this.labels = labels;
@@ -427,6 +422,7 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
         this.diskType = diskType;
         this.ephemeralOSDisk = ephemeralOSDisk;
         this.osDiskSize = osDiskSize;
+        this.spotInstance = spotInstance;
 
         if (StringUtils.isBlank(noOfParallelJobs) || !noOfParallelJobs.matches(Constants.REG_EX_DIGIT)
                 || noOfParallelJobs.
@@ -463,11 +459,7 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
         this.doNotUseMachineIfInitFails = doNotUseMachineIfInitFails;
         this.enableMSI = enableMSI;
         this.enableUAMI = enableUAMI;
-        if (enableUAMI) {
-            this.uamiID = uamiID;
-        } else {
-            this.uamiID = null;
-        }
+        this.uamiID = uamiID;
         this.templateDisabled = templateDisabled;
         this.templateStatusDetails = "";
 
@@ -584,15 +576,6 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
         this.javaPath = javaPath;
     }
 
-    public boolean isSpotInstance() {
-        return spotInstance;
-    }
-
-    @DataBoundSetter
-    public void setSpotInstance(boolean spotInstance) {
-        this.spotInstance = spotInstance;
-    }
-
     public static Map<String, Object> getTemplateProperties(AzureVMAgentTemplate template) {
         Map<String, Object> templateProperties = new HashMap<>();
         String builtInImage = template.getBuiltInImage();
@@ -667,6 +650,8 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
                 isBasic ? false : template.isEphemeralOSDisk());
         templateProperties.put("uamiID",
                 isBasic ? "" : template.getUamiID());
+        templateProperties.put("spotInstance",
+                isBasic ? false : template.isSpotInstance());
 
         return templateProperties;
     }
@@ -674,28 +659,26 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
     public static String getBasicInitScript(AzureVMAgentTemplate template) {
         StringBuilder stringBuilder = new StringBuilder();
         try {
-            String builtInImage = template.getBuiltInImage();
             stringBuilder.append(
                     AzureVMManagementServiceDelegate.PRE_INSTALLED_TOOLS_SCRIPT
-                            .get(builtInImage).get(Constants.INSTALL_JAVA));
+                            .get(template.getBuiltInImage()).get(Constants.INSTALL_JAVA));
             if (template.isInstallMaven()) {
                 stringBuilder.append(getSeparator(template.getOsType()));
                 stringBuilder.append(
                         AzureVMManagementServiceDelegate.PRE_INSTALLED_TOOLS_SCRIPT
-                                .get(builtInImage).get(Constants.INSTALL_MAVEN));
+                                .get(template.getBuiltInImage()).get(Constants.INSTALL_MAVEN));
             }
             if (template.isInstallGit()) {
                 stringBuilder.append(getSeparator(template.getOsType()));
                 stringBuilder.append(
                         AzureVMManagementServiceDelegate.PRE_INSTALLED_TOOLS_SCRIPT
-                                .get(builtInImage).get(Constants.INSTALL_GIT));
+                                .get(template.getBuiltInImage()).get(Constants.INSTALL_GIT));
             }
-            if ((builtInImage.equals(Constants.UBUNTU_1604_LTS) || builtInImage.equals(Constants.UBUNTU_2004_LTS))
-                    && template.isInstallDocker()) {
+            if (template.getBuiltInImage().equals(Constants.UBUNTU_1604_LTS) && template.isInstallDocker()) {
                 stringBuilder.append(getSeparator(template.getOsType()));
                 stringBuilder.append(
                         AzureVMManagementServiceDelegate.PRE_INSTALLED_TOOLS_SCRIPT
-                                .get(builtInImage).get(Constants.INSTALL_DOCKER)
+                                .get(template.getBuiltInImage()).get(Constants.INSTALL_DOCKER)
                                 .replace("${ADMIN}",
                                         template.getVMCredentials().getUsername()));
             }
@@ -861,18 +844,6 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
         return StringUtils.isBlank(storageAccountType) ? SkuName.STANDARD_LRS.toString() : storageAccountType;
     }
 
-    public String getOsDiskStorageAccountType() {
-        if (StringUtils.isBlank(osDiskStorageAccountType)) {
-            return getStorageAccountType();
-        }
-        return osDiskStorageAccountType;
-    }
-
-    @DataBoundSetter
-    public void setOsDiskStorageAccountType(String osDiskStorageAccountType) {
-        this.osDiskStorageAccountType = osDiskStorageAccountType;
-    }
-
     public String getStorageAccountName() {
         return storageAccountName;
     }
@@ -892,6 +863,10 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
 
     public boolean isEphemeralOSDisk() {
         return ephemeralOSDisk;
+    }
+
+    public boolean isSpotInstance() {
+        return spotInstance;
     }
 
     public int getOsDiskSize() {
@@ -1211,15 +1186,6 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
         return retentionStrategy;
     }
 
-    public int getMaximumDeploymentSize() {
-        return maximumDeploymentSize;
-    }
-
-    @DataBoundSetter
-    public void setMaximumDeploymentSize(int maximumDeploymentSize) {
-        this.maximumDeploymentSize = maximumDeploymentSize;
-    }
-
     /**
      * Provision new agents using this template.
      *
@@ -1351,8 +1317,7 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
                 Set<String> locations = AzureClientHolder.getDelegate(azureCredentialsId)
                         .getVirtualMachineLocations(managementEndpoint != null ? managementEndpoint : envName);
                 if (locations != null) {
-                    Set<String> sortedLocations = new TreeSet<>(locations);
-                    for (String location : sortedLocations) {
+                    for (String location : locations) {
                         model.add(location);
                     }
                 }
@@ -1361,7 +1326,7 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
             return model;
         }
 
-        public ListBoxModel doFillAvailabilityTypeValueItems() {
+        public String doFillAvailabilityTypeValueItems() {
             return null;
         }
 
@@ -1398,7 +1363,9 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
             return model;
         }
 
-        public ListBoxModel doFillStorageAccountTypeItems(@QueryParameter String virtualMachineSize) {
+        public ListBoxModel doFillStorageAccountTypeItems(
+                @QueryParameter String virtualMachineSize)
+                throws IOException, ServletException {
 
             ListBoxModel model = new ListBoxModel();
             model.add("--- Select Storage Account Type ---", "");
@@ -1408,21 +1375,6 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
             /*As introduced in Azure Docs, the size contains 'S' supports premium storage*/
             if (virtualMachineSize.matches(".*_[a-zA-Z]([0-9]+[Mm]?[Ss]|[Ss][0-9]+).*")) {
                 model.add(SkuName.PREMIUM_LRS.toString());
-            }
-            return model;
-        }
-
-        public ListBoxModel doFillOsDiskStorageAccountTypeItems(@QueryParameter String virtualMachineSize) {
-
-            ListBoxModel model = new ListBoxModel();
-            model.add("--- Select Storage Account Type ---", "");
-
-            model.add(DiskSkuTypes.STANDARD_LRS.toString());
-            model.add(DiskSkuTypes.STANDARD_SSD_LRS.toString());
-
-            /*As introduced in Azure Docs, the size contains 'S' supports premium storage*/
-            if (virtualMachineSize.matches(".*_[a-zA-Z]([0-9]+[Mm]?[Ss]|[Ss][0-9]+).*")) {
-                model.add(DiskSkuTypes.PREMIUM_LRS.toString());
             }
             return model;
         }
@@ -1481,10 +1433,8 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
 
         public ListBoxModel doFillBuiltInImageItems() {
             ListBoxModel model = new ListBoxModel();
-            model.add(Constants.UBUNTU_2004_LTS);
-            model.add(Constants.UBUNTU_1604_LTS);
-            model.add(Constants.WINDOWS_SERVER_2019);
             model.add(Constants.WINDOWS_SERVER_2016);
+            model.add(Constants.UBUNTU_1604_LTS);
             return model;
         }
 
@@ -1511,7 +1461,7 @@ public class AzureVMAgentTemplate implements Describable<AzureVMAgentTemplate>, 
             return model;
         }
 
-        public ListBoxModel doFillImageReferenceTypeValueItems() {
+        public String doFillImageReferenceTypeValueItems() {
             return null;
         }
 

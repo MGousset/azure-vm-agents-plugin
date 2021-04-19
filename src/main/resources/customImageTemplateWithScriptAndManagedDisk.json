@@ -95,7 +95,7 @@
                 "osProfile": {
                     "computerName": "[concat(variables('vmName'), copyIndex())]",
                     "adminUsername": "[variables('adminUsername')]",
-                    "adminPassword": "[parameters('adminPassword')]"
+                    "adminPassword": "[variables('adminPassword')]"
                 },
                 "storageProfile": {
                     "imageReference": {
@@ -106,7 +106,7 @@
                         "caching": "[if(bool(variables('ephemeralOSDisk')), 'ReadOnly', json('null'))]",
                         "diffDiskSettings": "[if(bool(variables('ephemeralOSDisk')), json('{\"option\": \"Local\"}'), json('null'))]",
                         "managedDisk": {
-                            "storageAccountType": "[variables('osDiskStorageAccountType')]"
+                            "storageAccountType": "[variables('storageAccountType')]"
                         }
                     }
                 },

@@ -130,6 +130,8 @@ public class AzureVMAgent extends AbstractCloudSlave implements TrackedItem {
 
     private final String uamiID;
 
+    private final boolean spotInstance;
+
     private String javaPath;
 
     private boolean eligibleForReuse;
@@ -174,6 +176,7 @@ public class AzureVMAgent extends AbstractCloudSlave implements TrackedItem {
             boolean enableUAMI,
             boolean ephemeralOSDisk,
             String uamiID,
+            boolean spotInstance,
             String javaPath,
             AzureVMAgentTemplate template) throws FormException, IOException {
 
@@ -209,6 +212,7 @@ public class AzureVMAgent extends AbstractCloudSlave implements TrackedItem {
         this.enableUAMI = enableUAMI;
         this.ephemeralOSDisk = ephemeralOSDisk;
         this.uamiID = uamiID;
+        this.spotInstance = spotInstance;
         this.template = template;
         this.creationTime = System.currentTimeMillis();
     }
@@ -245,6 +249,7 @@ public class AzureVMAgent extends AbstractCloudSlave implements TrackedItem {
             boolean enableUAMI,
             boolean ephemeralOSDisk,
             String uamiID,
+            boolean spotInstance,
             AzureVMAgentTemplate template,
             String fqdn,
             String javaPath) throws FormException, IOException {
@@ -286,6 +291,7 @@ public class AzureVMAgent extends AbstractCloudSlave implements TrackedItem {
                 enableUAMI,
                 ephemeralOSDisk,
                 uamiID,
+                spotInstance,
                 javaPath,
                 template
         );
@@ -488,6 +494,10 @@ public class AzureVMAgent extends AbstractCloudSlave implements TrackedItem {
         return ephemeralOSDisk;
     }
 
+    public boolean isSpotInstance() {
+        return spotInstance;
+    }
+
     public AzureVMAgentTemplate getTemplate() {
         return template;
     }
@@ -578,7 +588,7 @@ public class AzureVMAgent extends AbstractCloudSlave implements TrackedItem {
             boolean skipTerminateScript = StringUtils.isBlank(terminateScript);
             // Check if VM is already stopped or stopping or getting deleted ,
             // if yes then there is no point in trying to connect
-            // Added this check - since after restarting jenkins controller,
+            // Added this check - since after restarting jenkins master,
             // jenkins is trying to connect to all the agents although agents are suspended.
             // This still means that a delete agent will eventually get cleaned up.
             try {

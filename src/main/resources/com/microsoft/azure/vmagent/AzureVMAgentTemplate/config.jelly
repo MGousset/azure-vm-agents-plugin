@@ -1,7 +1,7 @@
 <?jelly escape-by-default='true'?>
 <j:jelly xmlns:j="jelly:core" xmlns:c="/lib/credentials"
          xmlns:f="/lib/form" xmlns:ui="/lib/azure">
-    <div>
+    <table width="100%">
         <f:section title="${%General_Configuration}">
             <f:entry title="${%Template_Name}" field="templateName"
                      help="/plugin/azure-vm-agents/help-templateName.html">
@@ -48,13 +48,13 @@
 
             <f:entry title="${%Storage_Account_Name}">
                 <ui:radioBlock name="storageAccountNameReferenceType" value="new" title="${%Storage_Account_Create_New}" checked="${instance == null || instance.isStorageAccountNameReferenceTypeEquals('new')}" inline="true">
-                    <f:entry title="${%Name}" field="newStorageAccountName" help="/plugin/azure-vm-agents/help-storageAccountName.html">
+                    <f:entry field="newStorageAccountName" help="/plugin/azure-vm-agents/help-storageAccountName.html">
                         <f:textbox/>
                     </f:entry>
                 </ui:radioBlock>
 
                 <ui:radioBlock name="storageAccountNameReferenceType" value="existing" title="${%Storage_Account_Use_Exist}" checked="${instance.isStorageAccountNameReferenceTypeEquals('existing')}" inline="true">
-                    <f:entry title="${%Name}" field="existingStorageAccountName" help="/plugin/azure-vm-agents/help-storageAccountName.html">
+                    <f:entry field="existingStorageAccountName" help="/plugin/azure-vm-agents/help-storageAccountName.html">
                         <f:select/>
                     </f:entry>
                 </ui:radioBlock>
@@ -64,16 +64,16 @@
                 <f:select/>
             </f:entry>
 
-            <f:entry title="${%OS disk storage account type}" field="osDiskStorageAccountType">
-                <f:select/>
-            </f:entry>
-
             <f:entry title="${%Use_Ephemeral_OS_Disk}" field="ephemeralOSDisk">
                 <f:checkbox/>
             </f:entry>
 
             <f:entry title="${%OS_Disk_Size}" field="osDiskSize" help="/plugin/azure-vm-agents/help-osDiskSize.html">
                 <f:textbox/>
+            </f:entry>
+
+            <f:entry title="${%Spot_Instance}" field="spotInstance">
+                <f:checkbox/>
             </f:entry>
 
             <f:dropdownDescriptorSelector field="retentionStrategy" title="${%Retention_Strategy}" descriptors="${descriptor.azureVMRetentionStrategy}"/>
@@ -86,24 +86,6 @@
             <f:entry title="${%Usage}" field="usageMode" help="/plugin/azure-vm-agents/help-slaveMode.html">
                 <f:select/>
             </f:entry>
-
-            <f:entry title="${%Maximum_Deployment_Size}" field="maximumDeploymentSize">
-                <f:number default="10"/>
-            </f:entry>
-
-            <f:entry title="${%Spot instance}" field="spotInstance">
-                <f:checkbox/>
-            </f:entry>
-
-            <f:entry title="${%Enable_MSI}" field="enableMSI">
-                <f:checkbox/>
-            </f:entry>
-
-            <f:optionalBlock title="${%Enable_UAMI}" field="enableUAMI" inline="true">
-                <f:entry title="${%UAMI_ID}" field="uamiID">
-                    <f:textbox/>
-                </f:entry>
-            </f:optionalBlock>
         </f:section>
 
         <f:section title="${%Image_Configuration}">
@@ -118,7 +100,7 @@
                         <f:checkbox/>
                     </f:entry>
 
-                    <f:entry title="Install Maven (v3.6.3)" field="installMaven">
+                    <f:entry title="Install Maven (V3.5.2)" field="installMaven">
                         <f:checkbox/>
                     </f:entry>
 
@@ -213,6 +195,19 @@
                         <f:textarea/>
                     </f:entry>
 
+                    <f:entry title="${%Enable_MSI}" field="enableMSI"
+                        help="/plugin/azure-vm-agents/help-enableMSI.html">
+                        <f:checkbox/>
+                    </f:entry>
+
+                    <f:entry title="${%Enable_UAMI}" field="enableUAMI">
+                        <f:checkbox/>
+                    </f:entry>
+
+                    <f:entry title="${%UAMI_ID}" field="uamiID">
+                        <f:textbox/>
+                    </f:entry>
+
                 </f:section>
 
                 <f:advanced>
@@ -279,5 +274,5 @@
         </f:entry>
         <f:validateButton title="${%Verify_Template}" progress="${%Verifying_Template_MSG}" method="verifyConfiguration"
                           with="azureCredentialsId,resourceGroupReferenceType,newResourceGroupName,existingResourceGroupName,maxVirtualMachinesLimit,deploymentTimeout,templateName,labels,location,virtualMachineSize,storageAccountNameReferenceType,newStorageAccountName,existingStorageAccountName,storageAccountType,noOfParallelJobs,imageTopLevelType,builtInImage,image,osType,id,uri,publisher,offer,sku,version,galleryName,galleryImageDefinition,galleryImageVersion,gallerySubscriptionId,galleryResourceGroup,agentLaunchMethod,initScript,credentialsId,virtualNetworkName,virtualNetworkResourceGroupName,subnetName,usePrivateIP,nsgName,jvmOptions"/>
-    </div>
+    </table>
 </j:jelly>

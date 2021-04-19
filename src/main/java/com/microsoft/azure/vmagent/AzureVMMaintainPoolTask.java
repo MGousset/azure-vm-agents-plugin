@@ -48,14 +48,9 @@ public class AzureVMMaintainPoolTask extends AsyncPeriodicWork {
             }
         }
         if (currentSize < sizeLimit) {
-            // Determine how many nodes to provision
-            int deploymentSize = sizeLimit - currentSize;
-            if (template.getMaximumDeploymentSize() > 0 && deploymentSize > template.getMaximumDeploymentSize()) {
-                deploymentSize = template.getMaximumDeploymentSize();
-            }
             LOGGER.log(getNormalLoggingLevel(), "Prepare for provisioning {0} agents for template {1}",
-                    new Object[]{deploymentSize, template.getTemplateName()});
-            provisionNodes(cloud, template, deploymentSize);
+                    new Object[]{sizeLimit - currentSize, template.getTemplateName()});
+            provisionNodes(cloud, template, sizeLimit - currentSize);
         }
     }
 
